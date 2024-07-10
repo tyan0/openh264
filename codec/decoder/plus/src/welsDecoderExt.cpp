@@ -1055,7 +1055,7 @@ void CWelsDecoder::ReleaseBufferedReadyPictureReorder (PWelsDecoderContext pCtx,
       int32_t iLastPOC = pCtx != NULL ? pCtx->pSliceHeader->iPicOrderCntLsb : m_sPictInfoList[m_iLastBufferedIdx].iPOC;
       int32_t iLastSeqNum = pCtx != NULL ? pCtx->iSeqNum : m_sPictInfoList[m_iLastBufferedIdx].iSeqNum;
       isReady = (m_sReoderingStatus.iLastWrittenPOC > IMinInt32
-        && m_sReoderingStatus.iMinPOC - m_sReoderingStatus.iLastWrittenPOC <= 1)
+        && m_sReoderingStatus.iMinPOC <= m_sReoderingStatus.iLastWrittenPOC + 1)
         || m_sReoderingStatus.iMinPOC < iLastPOC
         || m_sReoderingStatus.iMinSeqNum - iLastSeqNum < 0;
     }

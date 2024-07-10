@@ -1079,16 +1079,34 @@ int32_t ParseSliceHeaderSyntaxs (PWelsDecoderContext pCtx, PBitStringAux pBs, co
       pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb = 0;
       pCtx->pLastDecPicInfo->iPrevPicOrderCntLsb = 0;
     }
+    /* We shoud not expect that overflow in signed integer returns wrapped-
+       around result. C/C++ standard states the result is undefined. */
     int32_t pocMsb;
     if (pocLsb < pCtx->pLastDecPicInfo->iPrevPicOrderCntLsb
         && pCtx->pLastDecPicInfo->iPrevPicOrderCntLsb - pocLsb >= iMaxPocLsb / 2)
-      pocMsb = pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb + iMaxPocLsb;
+      {
+        if (INT32_MAX - iMaxPocLsb < pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb)
+          /* Will overflow. Emulate wraparound result. */
+          pocMsb = (pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb - INT32_MAX - 1) + (INT32_MIN + iMaxPocLsb);
+        else
+          pocMsb = pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb + iMaxPocLsb;
+      }
     else if (pocLsb > pCtx->pLastDecPicInfo->iPrevPicOrderCntLsb
              && pocLsb - pCtx->pLastDecPicInfo->iPrevPicOrderCntLsb > iMaxPocLsb / 2)
-      pocMsb = pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb - iMaxPocLsb;
+      {
+        if (INT32_MIN + iMaxPocLsb > pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb)
+          /* Will overflow. Emulate wraparound result. */
+          pocMsb = (pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb - INT32_MIN) + (INT32_MAX - iMaxPocLsb + 1);
+        else
+          pocMsb = pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb - iMaxPocLsb;
+      }
     else
       pocMsb = pCtx->pLastDecPicInfo->iPrevPicOrderCntMsb;
-    pSliceHead->iPicOrderCntLsb = pocMsb + pocLsb;
+    if (INT32_MAX - pocLsb < pocMsb)
+      /* Will overflow. Emulate wraparound result. */
+      pSliceHead->iPicOrderCntLsb = (pocMsb - INT32_MAX - 1) + (INT32_MIN + pocLsb);
+    else
+      pSliceHead->iPicOrderCntLsb = pocMsb + pocLsb;
 
     if (pPps->bPicOrderPresentFlag && !pSliceHead->bFieldPicFlag) {
       pSliceHead->iPicOrderCntLsb += pSliceHead->iDeltaPicOrderCntBottom;
