@@ -2578,6 +2578,14 @@ int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBuf
       //make call PrefetchPic first before updating reference lists in threaded mode
       //this prevents from possible thread-decoding hanging
       pCtx->pDec = PrefetchPic (pCtx->pPicBuff);
+      //Clear the recycled buffer's row-ready flags before anything can see it as a
+      //reference. They still carry the signalled state from the buffer's previous frame,
+      //and a consumer that reads them in the meantime skips a wait it needed.
+      if (pCtx->pDec != NULL && GetThreadCount (pCtx) > 1 && pCtx->pDec->pReadyEvent != NULL) {
+        const uint32_t kuiRows = (pCtx->pDec->iHeightInPixel + 15) >> 4;
+        for (uint32_t uiRow = 0; uiRow < kuiRows; ++uiRow)
+          RESET_EVENT (&pCtx->pDec->pReadyEvent[uiRow]);
+      }
       if (pLastThreadCtx != NULL) {
         if (pLastThreadCtx->pDec != NULL) {
           pLastThreadCtx->pDec->bUsedAsRef = pLastThreadCtx->pCtx->uiNalRefIdc > 0;
@@ -2853,6 +2861,13 @@ int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBuf
           }
         }
       }
+
+      //Announce whatever is still held back before blocking on another worker or on
+      //anything that can fail: a row that is never announced costs every consumer of it a
+      //full WELS_DEC_THREAD_WAIT_TIMEOUT_MS, and the colocated-picture wait in
+      //GetColocatedMb() has no timeout at all.
+      if (iThreadCount > 1 && !pCtx->pParam->bParseOnly)
+        WelsDbkPadQFlush (pCtx);
 
       if (iThreadCount >= 1) {
         int32_t  id = pThreadCtx->sThreadInfo.uiThrNum;

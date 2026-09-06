@@ -268,7 +268,9 @@ void BaseMC (PWelsDecoderContext pCtx, sMCRefMember* pMCRefMem, const int32_t& l
     //the reference picture, and both list construction and ref_pic_list_modification can make
     //the same index name a different, less complete picture -- in which case the offset cached
     //for the previous occupant suppresses a wait that was needed.
-    const int32_t down_line = WELS_MIN (offset >> 4, int32_t (pCtx->sMb.iMbHeight) - 1);
+    //iFullMVy is clipped down to (-PADDING_LENGTH + 2) * 4 quarter-pel, so a 4x4 block can
+    //give offset >> 4 == -1 and index pReadyEvent out of bounds. Clamp at both ends.
+    const int32_t down_line = WELS_CLIP3 (offset >> 4, 0, int32_t (pCtx->sMb.iMbHeight) - 1);
     if (pRefPic->pReadyEvent[down_line].isSignaled != 1) {
       if (WAIT_EVENT (&pRefPic->pReadyEvent[down_line], WELS_DEC_THREAD_WAIT_TIMEOUT_MS) != WELS_DEC_THREAD_WAIT_SIGNALED) {
         pCtx->iErrorCode |= dsRefLost;

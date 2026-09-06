@@ -59,6 +59,10 @@
 #include "wels_decoder_thread.h"
 
 namespace WelsDec {
+
+//Widest picture the padding queue can hold a macroblock row for (16384 pixels).
+#define MAX_MB_WIDTH_FOR_PAD_QUEUE 1024
+
 #define MAX_PRED_MODE_ID_I16x16  3
 #define MAX_PRED_MODE_ID_CHROMA  3
 #define MAX_PRED_MODE_ID_I4x4    8
@@ -515,6 +519,14 @@ typedef struct TagWelsDecoderContext {
   void* pLastThreadCtx;
   WELS_MUTEX* pCsDecoder;
   int16_t lastReadyHeightOffset[LIST_A][MAX_REF_PIC_COUNT]; //last ready reference MB offset
+
+  //Macroblocks that have been filtered but not yet border-padded, oldest first. A
+  //macroblock's samples are only final once the macroblock below it has been filtered,
+  //which can be in the next slice, so this queue spans the frame rather than a slice.
+  int32_t                       iPadQIdx[MAX_MB_WIDTH_FOR_PAD_QUEUE + 2];
+  int32_t                       iPadQHead;
+  int32_t                       iPadQCount;
+  int32_t                       iPadQCap;
   PPictInfo               pPictInfoList;
   PPictReoderingStatus    pPictReoderingStatus;
 } SWelsDecoderContext, *PWelsDecoderContext;
