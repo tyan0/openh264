@@ -555,6 +555,10 @@ typedef struct tagSWelsDecThreadCtx {
   uint8_t* kpSrc;
   int32_t kiSrcLen;
   uint8_t** ppDst;
+  //The worker writes the decoded picture's plane pointers through ppDst. That must not be
+  //the caller's array: the caller's lives on its stack for one call, while the worker keeps
+  //running past it.
+  uint8_t* pDstOwn[3];
   SBufferInfo sDstInfo;
   PPicture pDec;
   SWelsDecEvent sImageReady;

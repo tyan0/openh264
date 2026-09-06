@@ -321,7 +321,7 @@ void CWelsDecoder::OpenDecoderThreads() {
       m_pDecThrCtx[i].threadCtxOwner = this;
       m_pDecThrCtx[i].kpSrc = NULL;
       m_pDecThrCtx[i].kiSrcLen = 0;
-      m_pDecThrCtx[i].ppDst = NULL;
+      m_pDecThrCtx[i].ppDst = m_pDecThrCtx[i].pDstOwn;
       m_pDecThrCtx[i].pDec = NULL;
       CREATE_EVENT (&m_pDecThrCtx[i].sImageReady, 1, 0, NULL);
       CREATE_EVENT (&m_pDecThrCtx[i].sSliceDecodeStart, 1, 0, NULL);
@@ -708,7 +708,7 @@ DECODING_STATE CWelsDecoder::DecodeFrameNoDelay (const unsigned char* kpSrc,
   int iRet = dsErrorFree;
   if (m_iThreadCount >= 1) {
     SET_EVENT (&m_sReleaseBufferEvent);
-    iRet = ThreadDecodeFrameInternal (kpSrc, kiSrcLen, ppDst, pDstInfo);
+    iRet = ThreadDecodeFrameInternal (kpSrc, kiSrcLen, pDstInfo);
     // The worker publishes into the shared reorder queue via
     // BufferingReadyPicture() while holding m_csDecoder, so every access to that
     // queue state on the caller side must take the same lock. The lock must not
@@ -1405,7 +1405,7 @@ DECODING_STATE CWelsDecoder::ParseAccessUnit (SWelsDecoderThreadCTX& sThreadCtx)
 * Run decoding picture in separate thread.
 */
 
-int CWelsDecoder::ThreadDecodeFrameInternal (const unsigned char* kpSrc, const int kiSrcLen, unsigned char** ppDst,
+int CWelsDecoder::ThreadDecodeFrameInternal (const unsigned char* kpSrc, const int kiSrcLen,
     SBufferInfo* pDstInfo) {
   int state = dsErrorFree;
   int32_t i, j;
@@ -1437,7 +1437,16 @@ int CWelsDecoder::ThreadDecodeFrameInternal (const unsigned char* kpSrc, const i
   }
   m_pDecThrCtx[signal].kpSrc = const_cast<uint8_t*> (kpSrc);
   m_pDecThrCtx[signal].kiSrcLen = kiSrcLen;
-  m_pDecThrCtx[signal].ppDst = ppDst;
+  //Point the worker at its own array rather than the caller's. sDstInfo is already copied by
+  //value here; ppDst was not, so every worker held the address of a caller stack array -- the
+  //same address on every call, since each call is at the same depth -- and wrote the plane
+  //pointers of whatever frame it happened to finish into whichever call was in progress. The
+  //caller's array is filled by the dequeue in ReleaseBufferedReadyPicture*(), on the caller's
+  //own thread.
+  m_pDecThrCtx[signal].pDstOwn[0] = NULL;
+  m_pDecThrCtx[signal].pDstOwn[1] = NULL;
+  m_pDecThrCtx[signal].pDstOwn[2] = NULL;
+  m_pDecThrCtx[signal].ppDst = m_pDecThrCtx[signal].pDstOwn;
   memcpy (&m_pDecThrCtx[signal].sDstInfo, pDstInfo, sizeof (SBufferInfo));
 
   state = ParseAccessUnit (m_pDecThrCtx[signal]);
