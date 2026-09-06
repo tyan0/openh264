@@ -107,6 +107,7 @@ PPicture AllocPicture (PWelsDecoderContext pCtx, const int32_t kiPicWidth, const
   pPic->iHeightInPixel = kiPicHeight;
   pPic->iFrameNum      = -1;
   pPic->iRefCount = 0;
+  pPic->iPinCount = 0;
   pPic->pSetUnRef = NULL;
 
   uint32_t uiMbWidth = (kiPicWidth + 15) >> 4;
@@ -191,7 +192,7 @@ PPicture PrefetchPic (PPicBuff pPicBuf) {
 
   for (iPicIdx = pPicBuf->iCurrentIdx + 1; iPicIdx < pPicBuf->iCapacity ; ++iPicIdx) {
     if (pPicBuf->ppPic[iPicIdx] != NULL && !pPicBuf->ppPic[iPicIdx]->bUsedAsRef
-        && pPicBuf->ppPic[iPicIdx]->iRefCount <= 0) {
+        && pPicBuf->ppPic[iPicIdx]->iRefCount <= 0 && pPicBuf->ppPic[iPicIdx]->iPinCount <= 0) {
       pPic = pPicBuf->ppPic[iPicIdx];
       break;
     }
@@ -203,7 +204,7 @@ PPicture PrefetchPic (PPicBuff pPicBuf) {
   }
   for (iPicIdx = 0 ; iPicIdx <= pPicBuf->iCurrentIdx ; ++iPicIdx) {
     if (pPicBuf->ppPic[iPicIdx] != NULL && !pPicBuf->ppPic[iPicIdx]->bUsedAsRef
-        && pPicBuf->ppPic[iPicIdx]->iRefCount <= 0) {
+        && pPicBuf->ppPic[iPicIdx]->iRefCount <= 0 && pPicBuf->ppPic[iPicIdx]->iPinCount <= 0) {
       pPic = pPicBuf->ppPic[iPicIdx];
       break;
     }

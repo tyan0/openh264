@@ -527,6 +527,11 @@ typedef struct TagWelsDecoderContext {
   int32_t                       iPadQHead;
   int32_t                       iPadQCount;
   int32_t                       iPadQCap;
+
+  //Pictures this frame is decoding against, held through SPicture::iPinCount so that
+  //another worker's PrefetchPic() cannot hand the buffer out from under it.
+  PPicture                      pPinnedRef[LIST_A * MAX_DPB_COUNT * 3];
+  int32_t                       iPinnedRefCount;
   PPictInfo               pPictInfoList;
   PPictReoderingStatus    pPictReoderingStatus;
 } SWelsDecoderContext, *PWelsDecoderContext;

@@ -70,7 +70,10 @@ static int32_t RemainOneBufferInDpbForEC (PWelsDecoderContext pCtx, PRefPic pRef
 static void SetUnRef (PPicture pRef) {
   if (pRef == NULL) return;
 
-  if (pRef->iRefCount <= 0) {
+  //A frame that is still decoding against this picture holds iPinCount, and clearing
+  //iFrameNum / bIsComplete / pRefPic out from under it changes what its remaining slices
+  //see. Defer, exactly as a held output buffer does.
+  if (pRef->iRefCount <= 0 && pRef->iPinCount <= 0) {
     pRef->bUsedAsRef = false;
     pRef->bIsLongRef = false;
     pRef->iFrameNum = -1;

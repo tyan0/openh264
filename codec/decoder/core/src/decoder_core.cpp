@@ -2517,6 +2517,57 @@ void InitCurDqLayerData (PWelsDecoderContext pCtx, PDqLayer pCurDq) {
  * DecodeCurrentAccessUnit
  * Decode current access unit when current AU is completed.
  */
+//Drop the pins taken for the previous frame. Idempotent, so a frame that exited early
+//cannot leak them: the next frame's PinRefPics() clears whatever is still held.
+static void ReleasePinnedRefPics (PWelsDecoderContext pCtx) {
+  for (int32_t i = 0; i < pCtx->iPinnedRefCount; ++i) {
+    PPicture pPin = pCtx->pPinnedRef[i];
+    if (pPin != NULL && pPin->iPinCount > 0) {
+      --pPin->iPinCount;
+      //Run an unref that was deferred while this frame held the picture.
+      if (pPin->iPinCount <= 0 && pPin->iRefCount <= 0 && pPin->pSetUnRef)
+        pPin->pSetUnRef (pPin);
+    }
+    pCtx->pPinnedRef[i] = NULL;
+  }
+  pCtx->iPinnedRefCount = 0;
+}
+
+//Hold the pictures this frame's slices can address through ref_idx. Anything still in the
+//DPB is already safe from PrefetchPic(), which skips pictures marked bUsedAsRef; what needs
+//holding is a picture that a later frame drops from the DPB while this one still lists it.
+static void PinRefPics (PWelsDecoderContext pCtx) {
+  ReleasePinnedRefPics (pCtx);
+  const int32_t kiMax = (int32_t) (sizeof (pCtx->pPinnedRef) / sizeof (pCtx->pPinnedRef[0]));
+  for (int32_t iList = LIST_0; iList < LIST_A; ++iList) {
+    //The per-slice WelsInitRefList() rebuilds pRefList out of the short and long term
+    //lists, so pinning pRefList as it stands at frame start pins the *previous* frame's
+    //list. Hold the DPB lists it will be rebuilt from as well.
+    PPicture* ppSet[3] = {
+      pCtx->sRefPic.pRefList[iList], pCtx->sRefPic.pShortRefList[iList], pCtx->sRefPic.pLongRefList[iList]
+    };
+    for (int32_t iSet = 0; iSet < 3; ++iSet)
+    for (int32_t i = 0; i < MAX_DPB_COUNT; ++i) {
+      PPicture pPin = ppSet[iSet][i];
+      if (pPin == NULL)
+        continue;
+      bool bSeen = false;
+      for (int32_t k = 0; k < pCtx->iPinnedRefCount; ++k) {
+        if (pCtx->pPinnedRef[k] == pPin) {
+          bSeen = true;
+          break;
+        }
+      }
+      if (bSeen)
+        continue;
+      if (pCtx->iPinnedRefCount >= kiMax)
+        return;
+      ++pPin->iPinCount;
+      pCtx->pPinnedRef[pCtx->iPinnedRefCount++] = pPin;
+    }
+  }
+}
+
 int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBufferInfo* pDstInfo) {
   PNalUnit pNalCur = pCtx->pNalCur = NULL;
   PAccessUnit pCurAu = pCtx->pAccessUnitList;
@@ -2628,7 +2679,10 @@ int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBuf
       }
       if (pThreadCtx != NULL) {
         pThreadCtx->pDec = pCtx->pDec;
-        if (iThreadCount > 1) ++pCtx->pDec->iRefCount;
+        if (iThreadCount > 1) {
+          ++pCtx->pDec->iRefCount;
+          PinRefPics (pCtx);
+        }
         uint32_t uiMbHeight = (pCtx->pDec->iHeightInPixel + 15) >> 4;
         for (uint32_t i = 0; i < uiMbHeight; ++i) {
           RESET_EVENT (&pCtx->pDec->pReadyEvent[i]);
@@ -2924,6 +2978,8 @@ int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBuf
       } else if (iThreadCount > 1) {
         SET_EVENT (&pThreadCtx->sImageReady);
       }
+      if (iThreadCount > 1)
+        ReleasePinnedRefPics (pCtx);
       pCtx->pDec = NULL; //after frame decoding, always set to NULL
     }
 

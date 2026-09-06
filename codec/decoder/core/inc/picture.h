@@ -70,6 +70,9 @@ struct SPicture {
   bool            bUsedAsRef;                                                     //for ref pic management
   bool            bIsLongRef;     // long term reference frame flag       //for ref pic management
   int8_t          iRefCount;
+  //Held by a frame that is still decoding against this picture. Separate from iRefCount,
+  //which the output path uses to decide when to call pSetUnRef().
+  int32_t         iPinCount;
   void            (*pSetUnRef)(WelsDec::SPicture*);
 
   bool            bIsComplete;    // indicate whether current picture is complete, not from EC
