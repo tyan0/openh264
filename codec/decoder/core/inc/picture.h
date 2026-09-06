@@ -79,7 +79,6 @@ struct SPicture {
   uint8_t         uiQualityId;
 
   int32_t         iFrameNum;              // frame number                 //for ref pic management
-  int32_t         iFrameWrapNum;          // frame wrap number            //for ref pic management
   int32_t         iLongTermFrameIdx;                                      //id for long term ref pic
   uint32_t        uiLongTermPicNum;       //long_term_pic_num
 

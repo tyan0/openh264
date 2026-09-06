@@ -51,7 +51,8 @@ static PPicture WelsDelLongFromList (PRefPic pRefPic, uint32_t uiLongTermFrameId
 static PPicture WelsDelShortFromListSetUnref (PRefPic pRefPic, int32_t iFrameNum);
 static PPicture WelsDelLongFromListSetUnref (PRefPic pRefPic, uint32_t uiLongTermFrameIdx);
 
-static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PRefPicMarking pRefPicMarking);
+static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PRefPicMarking pRefPicMarking,
+                     int32_t iCurFrameNum);
 static int32_t MMCOProcess (PWelsDecoderContext pCtx, PRefPic pRefPic, uint32_t uiMmcoType,
                             int32_t iShortFrameNum, uint32_t uiLongTermPicNum, int32_t iLongTermFrameIdx, int32_t iMaxLongTermFrameIdx);
 static int32_t SlidingWindow (PWelsDecoderContext pCtx, PRefPic pRefPic);
@@ -73,7 +74,6 @@ static void SetUnRef (PPicture pRef) {
     pRef->bUsedAsRef = false;
     pRef->bIsLongRef = false;
     pRef->iFrameNum = -1;
-    pRef->iFrameWrapNum = -1;
     //pRef->iFramePoc = 0;
     pRef->iLongTermFrameIdx = -1;
     pRef->uiLongTermPicNum = 0;
@@ -209,21 +209,12 @@ static int32_t WelsCheckAndRecoverForFutureDecoding (PWelsDecoderContext pCtx) {
   return ERR_NONE;
 }
 
-static void WrapShortRefPicNum (PWelsDecoderContext pCtx) {
-  int32_t i;
-  PSliceHeader pSliceHeader = &pCtx->pCurDqLayer->sLayerInfo.sSliceInLayer.sSliceHeaderExt.sSliceHeader;
-  int32_t iMaxPicNum = 1 << pSliceHeader->pSps->uiLog2MaxFrameNum;
-  PPicture* ppShoreRefList = pCtx->sRefPic.pShortRefList[LIST_0];
-  int32_t iShortRefCount = pCtx->sRefPic.uiShortRefCount[LIST_0];
-  //wrap pic num
-  for (i = 0; i < iShortRefCount; i++) {
-    if (ppShoreRefList[i]) {
-      if (ppShoreRefList[i]->iFrameNum > pSliceHeader->iFrameNum)
-        ppShoreRefList[i]->iFrameWrapNum = ppShoreRefList[i]->iFrameNum - iMaxPicNum;
-      else
-        ppShoreRefList[i]->iFrameWrapNum = ppShoreRefList[i]->iFrameNum;
-    }
-  }
+//The wrapped frame number depends on the frame_num of the slice being decoded, so it cannot
+//be cached on the picture: with frame-level threading two workers whose frame_num straddle
+//the MaxFrameNum wrap would write different values to the same shared picture. Compute it at
+//the point of use instead, where the current frame_num is in scope.
+static inline int32_t WrapFrameNum (int32_t iFrameNum, int32_t iCurFrameNum, int32_t iMaxPicNum) {
+  return (iFrameNum > iCurFrameNum) ? (iFrameNum - iMaxPicNum) : iFrameNum;
 }
 
 /**
@@ -234,7 +225,6 @@ int32_t WelsInitBSliceRefList (PWelsDecoderContext pCtx, int32_t iPoc) {
   int32_t err = WelsCheckAndRecoverForFutureDecoding (pCtx);
   if (err != ERR_NONE) return err;
 
-  WrapShortRefPicNum (pCtx);
 
   PPicture* ppShoreRefList = pCtx->sRefPic.pShortRefList[LIST_0];
   PPicture* ppLongRefList = pCtx->sRefPic.pLongRefList[LIST_0];
@@ -361,7 +351,6 @@ int32_t WelsInitRefList (PWelsDecoderContext pCtx, int32_t iPoc) {
   int32_t err = WelsCheckAndRecoverForFutureDecoding (pCtx);
   if (err != ERR_NONE) return err;
 
-  WrapShortRefPicNum (pCtx);
 
   PPicture* ppShoreRefList = pCtx->sRefPic.pShortRefList[LIST_0];
   PPicture* ppLongRefList  = pCtx->sRefPic.pLongRefList[LIST_0];
@@ -540,7 +529,7 @@ int32_t WelsReorderRefList2 (PWelsDecoderContext pCtx) {
 
           for (j = 0; j < iShortRefCount; j++) {
             if (ppShoreRefList[j]) {
-              if (ppShoreRefList[j]->iFrameWrapNum == iPredFrameNum) {
+              if (WrapFrameNum (ppShoreRefList[j]->iFrameNum, iCurFrameNum, iMaxPicNum) == iPredFrameNum) {
                 ppRefList[iCount++] = ppShoreRefList[j];
                 break;
               }
@@ -549,7 +538,8 @@ int32_t WelsReorderRefList2 (PWelsDecoderContext pCtx) {
           k = iCount;
           for (j = k; j <= iRefCount; j++) {
             if (ppRefList[j] != NULL) {
-              if (ppRefList[j]->bIsLongRef || ppRefList[j]->iFrameWrapNum != iPredFrameNum)
+              if (ppRefList[j]->bIsLongRef
+                  || WrapFrameNum (ppRefList[j]->iFrameNum, iCurFrameNum, iMaxPicNum) != iPredFrameNum)
                 ppRefList[k++] = ppRefList[j];
             }
           }
@@ -618,7 +608,7 @@ int32_t WelsMarkAsRef (PWelsDecoderContext pCtx, PPicture pLastDec) {
     }
   } else {
     if (pRefPicMarking->bAdaptiveRefPicMarkingModeFlag) {
-      iRet = MMCO (pCtx, pRefPic, pRefPicMarking);
+      iRet = MMCO (pCtx, pRefPic, pRefPicMarking, pDec->iFrameNum);
       if (iRet != ERR_NONE) {
         if (pCtx->pParam->eEcActiveIdc != ERROR_CON_DISABLE) {
           iRet = RemainOneBufferInDpbForEC (pCtx, pRefPic);
@@ -661,13 +651,17 @@ int32_t WelsMarkAsRef (PWelsDecoderContext pCtx, PPicture pLastDec) {
   return iRet;
 }
 
-static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PRefPicMarking pRefPicMarking) {
+static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PRefPicMarking pRefPicMarking,
+                     int32_t iCurFrameNum) {
   PSps pSps = pCtx->pCurDqLayer->sLayerInfo.pSps;
   int32_t i = 0;
   int32_t iRet = ERR_NONE;
   for (i = 0; i < MAX_MMCO_COUNT && pRefPicMarking->sMmcoRef[i].uiMmcoType != MMCO_END; i++) {
     uint32_t uiMmcoType = pRefPicMarking->sMmcoRef[i].uiMmcoType;
-    int32_t iShortFrameNum = (pCtx->iFrameNum - pRefPicMarking->sMmcoRef[i].iDiffOfPicNum) & ((
+    // difference_of_pic_nums_minus1 is relative to the picture being marked.
+    // pCtx->iFrameNum belongs to whatever frame that context last started, which
+    // on the multi-threaded path is not the frame being marked.
+    int32_t iShortFrameNum = (iCurFrameNum - pRefPicMarking->sMmcoRef[i].iDiffOfPicNum) & ((
                                1 << pSps->uiLog2MaxFrameNum) - 1);
     uint32_t uiLongTermPicNum = pRefPicMarking->sMmcoRef[i].uiLongTermPicNum;
     int32_t iLongTermFrameIdx = pRefPicMarking->sMmcoRef[i].iLongTermFrameIdx;

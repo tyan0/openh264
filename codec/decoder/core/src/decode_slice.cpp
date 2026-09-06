@@ -1754,7 +1754,9 @@ int32_t WelsDecodeAndConstructSlice (PWelsDecoderContext pCtx) {
 
     ++pSlice->iTotalMbInCurSlice;
     if (uiEosFlag) { //end of slice
-      SET_EVENT (&pCtx->pDec->pReadyEvent[pCurDqLayer->iMbY]);
+      /* only signal the row once it is actually complete: a slice may end mid-row */
+      if (pCurDqLayer->iMbX == pCurDqLayer->iMbWidth - 1)
+        SET_EVENT (&pCtx->pDec->pReadyEvent[pCurDqLayer->iMbY]);
       break;
     }
     if (pSliceHeader->pPps->uiNumSliceGroups > 1) {
@@ -1776,7 +1778,8 @@ int32_t WelsDecodeAndConstructSlice (PWelsDecoderContext pCtx) {
     }
   } while (1);
   if (GetThreadCount (pCtx) > 1) {
-    SET_EVENT (&pCtx->pDec->pReadyEvent[pCurDqLayer->iMbY]);
+    if (pCurDqLayer->iMbX == pCurDqLayer->iMbWidth - 1)
+      SET_EVENT (&pCtx->pDec->pReadyEvent[pCurDqLayer->iMbY]);
   }
   return ERR_NONE;
 }
