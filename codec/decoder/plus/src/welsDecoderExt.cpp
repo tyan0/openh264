@@ -954,6 +954,18 @@ DECODING_STATE CWelsDecoder::FlushFrame (unsigned char** ppDst,
       }
     }
   }
+  // Wait for every worker to go idle before deciding whether anything is left. A worker
+  // that is still finishing a frame has not reached BufferingReadyPicture() yet -- the
+  // per-frame sSliceDecodeFinish event is signalled earlier than that -- so iNumOfPicts
+  // can read zero while frames are still to come. A caller that drains by flushing until a
+  // call produces nothing then stops early and loses them; that is what libavcodec's
+  // libopenh264dec.c does, and it costs two frames of a 48-frame stream at two threads.
+  // GetOption(DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER) already waits this way.
+  for (int32_t iActive = 0; iActive < m_DecCtxActiveCount; ++iActive) {
+    WAIT_SEMAPHORE (&m_pDecThrCtxActive[iActive]->sThreadInfo.sIsIdle, WELS_DEC_THREAD_WAIT_INFINITE);
+    RELEASE_SEMAPHORE (&m_pDecThrCtxActive[iActive]->sThreadInfo.sIsIdle);
+  }
+
   // Read the shared reorder-queue counters under m_csDecoder in
   // threaded mode (the worker mutates them in BufferingReadyPicture()); the
   // Release* dequeue re-locks internally, so do not hold the lock across it.
