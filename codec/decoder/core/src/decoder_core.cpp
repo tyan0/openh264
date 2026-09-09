@@ -2517,6 +2517,33 @@ void InitCurDqLayerData (PWelsDecoderContext pCtx, PDqLayer pCurDq) {
  * DecodeCurrentAccessUnit
  * Decode current access unit when current AU is completed.
  */
+//Record everything WelsMarkAsRef() will need about this access unit while the context still
+//describes it. The marking itself is done by the next frame's worker, which by then cannot
+//trust this context: it is reused for a later access unit as soon as this frame finishes.
+static void SnapshotRefMarkInfo (PWelsDecoderContext pCtx, PWelsDecoderThreadCTX pThreadCtx, PAccessUnit pCurAu) {
+  if (pThreadCtx == NULL || pCtx->pCurDqLayer == NULL || pCtx->pCurDqLayer->pRefPicMarking == NULL)
+    return;
+  SWelsDecRefMarkInfo& sInfo = pThreadCtx->sRefMarkInfo;
+  sInfo.sRefMarking = *pCtx->pCurDqLayer->pRefPicMarking;
+  sInfo.uiQualityId = pCtx->pCurDqLayer->sLayerInfo.sNalHeaderExt.uiQualityId;
+  sInfo.uiTemporalId = pCtx->pCurDqLayer->sLayerInfo.sNalHeaderExt.uiTemporalId;
+  sInfo.iSpsId = pCtx->pSps->iSpsId;
+  sInfo.iPpsId = pCtx->pPps->iPpsId;
+  sInfo.iNumRefFrames = pCtx->pSps->iNumRefFrames;
+  sInfo.uiLog2MaxFrameNum = pCtx->pCurDqLayer->sLayerInfo.pSps->uiLog2MaxFrameNum;
+  sInfo.bIsIdrAu = false;
+  if (pCurAu != NULL) {
+    for (uint32_t j = pCurAu->uiStartPos; j <= pCurAu->uiEndPos; ++j) {
+      if (pCurAu->pNalUnitsList[j]->sNalHeaderExt.sNalUnitHeader.eNalUnitType == NAL_UNIT_CODED_SLICE_IDR
+          || pCurAu->pNalUnitsList[j]->sNalHeaderExt.bIdrFlag) {
+        sInfo.bIsIdrAu = true;
+        break;
+      }
+    }
+  }
+  sInfo.bValid = true;
+}
+
 //Drop the pins taken for the previous frame. Idempotent, so a frame that exited early
 //cannot leak them: the next frame's PinRefPics() clears whatever is still held.
 static void ReleasePinnedRefPics (PWelsDecoderContext pCtx) {
@@ -2649,7 +2676,7 @@ int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBuf
               }
             }
             pLastThreadCtx->pCtx->sTmpRefPic = pLastThreadCtx->pCtx->sRefPic;
-            WelsMarkAsRef (pLastThreadCtx->pCtx, pLastThreadCtx->pDec);
+            WelsMarkAsRef (pLastThreadCtx->pCtx, pLastThreadCtx->pDec, &pLastThreadCtx->sRefMarkInfo);
             pCtx->sRefPic = pLastThreadCtx->pCtx->sTmpRefPic;
           } else {
             pCtx->sRefPic = pLastThreadCtx->pCtx->sRefPic;
@@ -2831,6 +2858,11 @@ int32_t DecodeCurrentAccessUnit (PWelsDecoderContext pCtx, uint8_t** ppDst, SBuf
         if (iThreadCount > 1) {
           if (iIdx == 0) {
             memset (&pCtx->lastReadyHeightOffset[0][0], -1, LIST_A * MAX_REF_PIC_COUNT * sizeof (int16_t));
+            //Record what this access unit says about marking its own picture, before letting
+            //the next worker start. That worker is the one that will mark this picture, and
+            //it must not read these from this context: signalling below releases it, and
+            //this context is handed a later access unit as soon as this frame is done.
+            SnapshotRefMarkInfo (pCtx, pThreadCtx, pCurAu);
             SET_EVENT (&pThreadCtx->sSliceDecodeStart);
           }
           iRet = WelsDecodeAndConstructSlice (pCtx);

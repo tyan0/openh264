@@ -548,6 +548,23 @@ typedef struct tagSWelsDecThread {
   DECLARE_PROCTHREAD_PTR (pThrProcMain);
 } SWelsDecThreadInfo, *PWelsDecThreadInfo;
 
+//Everything WelsMarkAsRef() needs to know about the access unit that produced a picture.
+//Reference marking for a picture runs on the *next* frame's worker, which cannot read these
+//out of the decoding worker's context: by then that context's slice headers and access unit
+//list may already have been overwritten with a later access unit, and marking then applies
+//another frame's dec_ref_pic_marking() to this one.
+typedef struct tagSWelsDecRefMarkInfo {
+  SRefPicMarking sRefMarking;
+  bool           bValid;
+  bool           bIsIdrAu;
+  int32_t        iNumRefFrames;
+  uint32_t       uiLog2MaxFrameNum;
+  uint8_t        uiQualityId;
+  uint8_t        uiTemporalId;
+  int32_t        iSpsId;
+  int32_t        iPpsId;
+} SWelsDecRefMarkInfo, *PWelsDecRefMarkInfo;
+
 typedef struct tagSWelsDecThreadCtx {
   SWelsDecThreadInfo sThreadInfo;
   PWelsDecoderContext pCtx;
@@ -569,6 +586,9 @@ typedef struct tagSWelsDecThreadCtx {
   // is signaled. Prevents concurrent workers from overwriting the shared pLastDecPicInfo
   // field before BufferingReadyPicture() reads it.
   PPicture      pPreviousDecodedPictureInDpb;
+  //Filled by this worker for its own picture before it lets the next worker start, and read
+  //by that next worker when it marks this picture as a reference.
+  SWelsDecRefMarkInfo sRefMarkInfo;
 } SWelsDecoderThreadCTX, *PWelsDecoderThreadCTX;
 
 static inline void ResetActiveSPSForEachLayer (PWelsDecoderContext pCtx) {

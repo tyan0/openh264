@@ -108,6 +108,9 @@ static DECODING_STATE  ConstructAccessUnit (CWelsDecoder* pWelsDecoder, PWelsDec
     RESET_EVENT (&pLastThreadCtx->sSliceDecodeStart);
   }
   pThrCtx->pDec = NULL;
+  //A snapshot belongs to one access unit; do not let the next frame's worker mark this
+  //picture from the previous access unit's copy if this one never records its own.
+  pThrCtx->sRefMarkInfo.bValid = false;
   if (GetThreadCount (pThrCtx->pCtx) > 1) {
     RESET_EVENT (&pThrCtx->sSliceDecodeFinish);
   }
@@ -323,6 +326,7 @@ void CWelsDecoder::OpenDecoderThreads() {
       m_pDecThrCtx[i].kiSrcLen = 0;
       m_pDecThrCtx[i].ppDst = m_pDecThrCtx[i].pDstOwn;
       m_pDecThrCtx[i].pDec = NULL;
+      memset (&m_pDecThrCtx[i].sRefMarkInfo, 0, sizeof (m_pDecThrCtx[i].sRefMarkInfo));
       CREATE_EVENT (&m_pDecThrCtx[i].sImageReady, 1, 0, NULL);
       CREATE_EVENT (&m_pDecThrCtx[i].sSliceDecodeStart, 1, 0, NULL);
       CREATE_EVENT (&m_pDecThrCtx[i].sSliceDecodeFinish, 1, 0, NULL);
