@@ -52,10 +52,11 @@ static PPicture WelsDelShortFromListSetUnref (PRefPic pRefPic, int32_t iFrameNum
 static PPicture WelsDelLongFromListSetUnref (PRefPic pRefPic, uint32_t uiLongTermFrameIdx);
 
 static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture pDec, PRefPicMarking pRefPicMarking,
-                     int32_t iCurFrameNum, uint32_t uiLog2MaxFrameNum, int32_t iNumRefFrames);
+                     int32_t iCurFrameNum, uint32_t uiLog2MaxFrameNum, int32_t iNumRefFrames,
+                     bool* pbHasMmco5);
 static int32_t MMCOProcess (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture pDec, int32_t iNumRefFrames,
                             uint32_t uiMmcoType, int32_t iShortFrameNum, uint32_t uiLongTermPicNum,
-                            int32_t iLongTermFrameIdx, int32_t iMaxLongTermFrameIdx);
+                            int32_t iLongTermFrameIdx, int32_t iMaxLongTermFrameIdx, bool* pbHasMmco5);
 static int32_t SlidingWindow (PWelsDecoderContext pCtx, PRefPic pRefPic, int32_t iNumRefFrames);
 
 static int32_t AddShortTermToList (PRefPic pRefPic, PPicture pPic);
@@ -631,7 +632,9 @@ int32_t WelsMarkAsRef (PWelsDecoderContext pCtx, PPicture pLastDec, const SWelsD
     }
   } else {
     if (pRefPicMarking->bAdaptiveRefPicMarkingModeFlag) {
-      iRet = MMCO (pCtx, pRefPic, pDec, pRefPicMarking, pDec->iFrameNum, kuiLog2MaxFrameNum, kiNumRefFrames);
+      bool bHasMmco5 = false;
+      iRet = MMCO (pCtx, pRefPic, pDec, pRefPicMarking, pDec->iFrameNum, kuiLog2MaxFrameNum, kiNumRefFrames,
+                   &bHasMmco5);
       if (iRet != ERR_NONE) {
         if (pCtx->pParam->eEcActiveIdc != ERROR_CON_DISABLE) {
           iRet = RemainOneBufferInDpbForEC (pCtx, pRefPic, kiNumRefFrames);
@@ -641,7 +644,13 @@ int32_t WelsMarkAsRef (PWelsDecoderContext pCtx, PPicture pLastDec, const SWelsD
         }
       }
 
-      if (pCtx->pLastDecPicInfo->bLastHasMmco5) {
+      //Whether *this* picture was marked with memory_management_control_operation 5, not
+      //whether some picture was. pLastDecPicInfo is one structure shared by every worker
+      //context: the flag is set here by one frame's marking, cleared by another frame's
+      //parse on the caller thread, and read back here for a third. A stale true zeroes the
+      //frame_num of a picture that had no MMCO 5, so it enters the DPB under the wrong
+      //number, the marking of later frames misses it, and it is never removed.
+      if (bHasMmco5) {
         pDec->iFrameNum = 0;
         pDec->iFramePoc = 0;
       }
@@ -675,7 +684,8 @@ int32_t WelsMarkAsRef (PWelsDecoderContext pCtx, PPicture pLastDec, const SWelsD
 }
 
 static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture pDec, PRefPicMarking pRefPicMarking,
-                     int32_t iCurFrameNum, uint32_t uiLog2MaxFrameNum, int32_t iNumRefFrames) {
+                     int32_t iCurFrameNum, uint32_t uiLog2MaxFrameNum, int32_t iNumRefFrames,
+                     bool* pbHasMmco5) {
   int32_t i = 0;
   int32_t iRet = ERR_NONE;
   for (i = 0; i < MAX_MMCO_COUNT && pRefPicMarking->sMmcoRef[i].uiMmcoType != MMCO_END; i++) {
@@ -692,7 +702,7 @@ static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture pDec, P
       return ERR_INFO_INVALID_MMCO_OPCODE_BASE;
     }
     iRet = MMCOProcess (pCtx, pRefPic, pDec, iNumRefFrames, uiMmcoType, iShortFrameNum, uiLongTermPicNum,
-                        iLongTermFrameIdx, iMaxLongTermFrameIdx);
+                        iLongTermFrameIdx, iMaxLongTermFrameIdx, pbHasMmco5);
     if (iRet != ERR_NONE) {
       return iRet;
     }
@@ -705,7 +715,7 @@ static int32_t MMCO (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture pDec, P
 }
 static int32_t MMCOProcess (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture pDec, int32_t iNumRefFrames,
                             uint32_t uiMmcoType, int32_t iShortFrameNum, uint32_t uiLongTermPicNum,
-                            int32_t iLongTermFrameIdx, int32_t iMaxLongTermFrameIdx) {
+                            int32_t iLongTermFrameIdx, int32_t iMaxLongTermFrameIdx, bool* pbHasMmco5) {
   PPicture pPic = NULL;
   int32_t i = 0;
   int32_t iRet = ERR_NONE;
@@ -765,6 +775,8 @@ static int32_t MMCOProcess (PWelsDecoderContext pCtx, PRefPic pRefPic, PPicture 
       // WelsResetRefPic() above, so do not call SetUnRef again here.
       *pRefPic = pCtx->sRefPic;
     }
+    if (pbHasMmco5 != NULL)
+      *pbHasMmco5 = true;
     pCtx->pLastDecPicInfo->bLastHasMmco5 = true;
     break;
   case MMCO_LONG:
